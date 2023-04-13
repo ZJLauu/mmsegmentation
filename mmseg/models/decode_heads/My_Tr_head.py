@@ -5,7 +5,7 @@ import warnings
 
 import torch
 import torch.nn as nn
-from mmcv.cnn import ConvModule, DepthwiseSeparableConvModule, Conv2d, build_norm_layer
+from mmcv.cnn import ConvModule, DepthwiseSeparableConvModule, Conv2d, build_norm_layer, build_activation_layer
 from mmcv.cnn.bricks.drop import build_dropout
 from mmcv.cnn.bricks.transformer import MultiheadAttention, FFN
 from mmengine import deprecated_api_warning
@@ -280,7 +280,9 @@ class SegTrueHead(BaseDecodeHead):
             in_channels=self.in_channels[0],
             out_channels=self.channels,
             kernel_size=1,
-            norm_cfg=None)
+            norm_cfg=dict(type='BN', requires_grad=True),
+            act_cfg=self.act_cfg)
+        self.act0 = build_activation_layer(self.act_cfg)
 
         self.convs = nn.ModuleList()
         for i in range(num_inputs):
@@ -290,26 +292,22 @@ class SegTrueHead(BaseDecodeHead):
                     out_channels=self.channels,
                     kernel_size=1,
                     stride=1,
-                    norm_cfg=None,
+                    norm_cfg=dict(type='BN', requires_grad=True),
                     act_cfg=self.act_cfg))
 
-        self.norm0 = build_norm_layer(self.norm_cfg, self.channels)[1]
-
-        self.fusion_attn = ConvModule(
+        self.fusion_attn = DepthwiseSeparableConvModule(
             in_channels=self.channels * num_inputs,
             out_channels=self.channels,
             kernel_size=1,
-            norm_cfg=None)
+            norm_cfg=dict(type='BN', requires_grad=True),
+            act_cfg=self.act_cfg)
 
         self.fusion_attn_feat = ConvModule(
-            in_channels=self.num_heads[0] + self.channels,
+            in_channels=2 * self.channels,
             out_channels=self.channels,
             kernel_size=1,
-            norm_cfg=None)
-
-        self.norm1 = build_norm_layer(self.norm_cfg, self.channels)[1]
-
-        self.norm2 = build_norm_layer(self.norm_cfg, self.channels)[1]
+            norm_cfg=dict(type='BN', requires_grad=True),
+            act_cfg=self.act_cfg)
 
         self.pred = Sequential(
             self.dropout,
@@ -352,19 +350,17 @@ class SegTrueHead(BaseDecodeHead):
                 resize(
                     input=conv(attn_map.transpose(1, 2).contiguous().reshape(bs * nclass, nhead,
                                                                              inputs[self.num_stages - 1 - idx].shape[2],
-                                                                             inputs[self.num_stages - 1 - idx].shape[3])),
+                                                                             inputs[self.num_stages - 1 - idx].shape[
+                                                                                 3])),
                     size=size,
                     mode=self.interpolate_mode,
                     align_corners=self.align_corners))
 
-        out = self.norm0(nchw_to_nlc(self.fusion_attn(torch.cat(outs, dim=1))))  # bs*nclass, c, h, w
+        out = self.fusion_attn(torch.cat(outs, dim=1))  # bs*nclass, c, h, w
+        feat_enc = self.feat_enc_conv(feat_enc)  # bs, c, h, w
 
-        feat_enc = nlc_to_nchw(self.norm1(nchw_to_nlc(self.feat_enc_conv(feat_enc))), size)  # bs, h*w, c
-
-        out = self.fusion_attn_feat(torch.cat([_expand(nlc_to_nchw(feat_enc, size), self.num_classes), out], dim=1))
-        out = self.norm2(nchw_to_nlc(out))  # bs, h*w, c
-
-        out = self.pred(nlc_to_nchw(out, size)).reshape(bs, self.num_classes, size[0], size[1])  # bs, nclass, h, w
+        out = self.fusion_attn_feat(torch.cat([_expand(feat_enc, self.num_classes), out], dim=1))
+        out = self.pred(out).reshape(bs, self.num_classes, size[0], size[1])  # bs, nclass, h, w
 
         return out
 
