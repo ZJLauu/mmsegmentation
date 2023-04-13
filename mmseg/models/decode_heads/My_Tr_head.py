@@ -345,7 +345,7 @@ class SegTrueHead(BaseDecodeHead):
         for idx in range(len(inputs)):
             x_kv = inputs[self.num_stages - 1 - idx]
             qpm_i = self.decoder[self.num_stages - 1 - idx]
-            query, attn_map = qpm_i(query, x_kv, idx)
+            query, attn_map = qpm_i(query, x_kv)
             bs, nhead, nclass, hw = attn_map.shape
             conv = self.convs[idx]
             outs.append(
