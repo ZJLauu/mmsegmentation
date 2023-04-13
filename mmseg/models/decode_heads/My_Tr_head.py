@@ -340,7 +340,7 @@ class SegTrueHead(BaseDecodeHead):
         inputs = self._transform_inputs(inputs)
         query = self.cls_embed.expand(inputs[0].shape[0], -1, -1)
         feat_enc = inputs[0]  # bs, c, h, w
-        bs, _, *size = feat_enc.shape[2:]
+        bs, _, *size = feat_enc.shape
         outs = []
         for idx in range(len(inputs)):
             x_kv = inputs[self.num_stages - 1 - idx]
