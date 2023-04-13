@@ -1,4 +1,5 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+from .My_Tr_head import SegTrueHead
 from .ann_head import ANNHead
 from .apc_head import APCHead
 from .aspp_head import ASPPHead
@@ -41,5 +42,5 @@ __all__ = [
     'SETRMLAHead', 'DPTHead', 'SETRMLAHead', 'SegmenterMaskTransformerHead',
     'SegformerHead', 'ISAHead', 'STDCHead', 'IterativeDecodeHead',
     'KernelUpdateHead', 'KernelUpdator', 'MaskFormerHead', 'Mask2FormerHead',
-    'LightHamHead', 'PIDHead'
+    'LightHamHead', 'PIDHead', 'SegTrueHead'
 ]
