@@ -216,14 +216,12 @@ class QueryParsingModule(BaseModule):
             ffn_drop=drop_rate,
             dropout_layer=dict(type='DropPath', drop_prob=drop_path_rate))
 
-    def forward(self, x_q, x_kv, head_index):
+    def forward(self, x_q, x_kv):
         x_kv = self.norm0(nchw_to_nlc(self.LinearProjection(x_kv)))
         x_q, attn_map = self.attn(query=x_q, key=x_kv, value=x_kv, identity=x_q)
-        if head_index == 3:
-            return attn_map
         x_q = self.norm1(x_q)
         x_q = self.norm2(self.ffn(x_q, identity=x_q))  # bs, h*w, c
-        return x_q
+        return x_q, attn_map
 
 
 @MODELS.register_module()
@@ -284,15 +282,34 @@ class SegTrueHead(BaseDecodeHead):
             kernel_size=1,
             norm_cfg=None)
 
+        self.convs = nn.ModuleList()
+        for i in range(num_inputs):
+            self.convs.append(
+                ConvModule(
+                    in_channels=self.num_heads[i],
+                    out_channels=self.channels,
+                    kernel_size=1,
+                    stride=1,
+                    norm_cfg=None,
+                    act_cfg=self.act_cfg))
+
         self.norm0 = build_norm_layer(self.norm_cfg, self.channels)[1]
 
-        self.fusion_conv = ConvModule(
+        self.fusion_attn = ConvModule(
+            in_channels=self.channels * num_inputs,
+            out_channels=self.channels,
+            kernel_size=1,
+            norm_cfg=None)
+
+        self.fusion_attn_feat = ConvModule(
             in_channels=self.num_heads[0] + self.channels,
             out_channels=self.channels,
             kernel_size=1,
             norm_cfg=None)
 
         self.norm1 = build_norm_layer(self.norm_cfg, self.channels)[1]
+
+        self.norm2 = build_norm_layer(self.norm_cfg, self.channels)[1]
 
         self.pred = Sequential(
             self.dropout,
@@ -321,23 +338,33 @@ class SegTrueHead(BaseDecodeHead):
     def forward(self, inputs):
         # Receive 4 stage backbone feature map: 1/4, 1/8, 1/16, 1/32
         inputs = self._transform_inputs(inputs)
-        query_or_map = self.cls_embed.expand(inputs[0].shape[0], -1, -1)
+        query = self.cls_embed.expand(inputs[0].shape[0], -1, -1)
+        feat_enc = inputs[0]  # bs, c, h, w
+        bs, _, *size = feat_enc.shape[2:]
+        outs = []
         for idx in range(len(inputs)):
             x_kv = inputs[self.num_stages - 1 - idx]
             qpm_i = self.decoder[self.num_stages - 1 - idx]
-            query_or_map = qpm_i(query_or_map, x_kv, idx)
+            query, attn_map = qpm_i(query, x_kv, idx)
+            bs, nhead, nclass, hw = attn_map.shape
+            conv = self.convs[idx]
+            outs.append(
+                resize(
+                    input=conv(attn_map.transpose(1, 2).contiguous().reshape(bs * nclass, nhead,
+                                                                             inputs[self.num_stages - 1 - idx].shape[2],
+                                                                             inputs[self.num_stages - 1 - idx].shape[3])),
+                    size=size,
+                    mode=self.interpolate_mode,
+                    align_corners=self.align_corners))
 
-        feat_enc = inputs[0]  # bs, c, h, w
-        size = feat_enc.shape[2:]
-        feat_enc = self.norm0(nchw_to_nlc(self.feat_enc_conv(feat_enc)))  # bs, h*w, c
+        out = self.norm0(nchw_to_nlc(self.fusion_attn(torch.cat(outs, dim=1))))  # bs*nclass, c, h, w
 
-        bs, nhead, nclass, hw = query_or_map.shape
-        attn_map = query_or_map.transpose(1, 2).reshape(bs * nclass, nhead, size[0], size[1])  # bs*nclass, nhead, h, w
+        feat_enc = nlc_to_nchw(self.norm1(nchw_to_nlc(self.feat_enc_conv(feat_enc))), size)  # bs, h*w, c
 
-        out = self.fusion_conv(torch.cat([_expand(nlc_to_nchw(feat_enc, size), nclass), attn_map], dim=1))
-        out = self.norm1(nchw_to_nlc(out))  # bs, h*w, c
+        out = self.fusion_attn_feat(torch.cat([_expand(nlc_to_nchw(feat_enc, size), self.num_classes), out], dim=1))
+        out = self.norm2(nchw_to_nlc(out))  # bs, h*w, c
 
-        out = self.pred(nlc_to_nchw(out, size)).reshape(bs, nclass, size[0], size[1])  # bs, nclass, h, w
+        out = self.pred(nlc_to_nchw(out, size)).reshape(bs, self.num_classes, size[0], size[1])  # bs, nclass, h, w
 
         return out
 
