@@ -270,19 +270,14 @@ class SegTrueHead(BaseDecodeHead):
                     norm_cfg=self.norm_cfg,
                     qkv_bias=qkv_bias))
 
-        # self.feat_enc_conv = ConvModule(
-        #     in_channels=self.in_channels[0],
-        #     out_channels=self.channels,
-        #     kernel_size=1,
-        #     norm_cfg=None)
-
         self.feat_enc_conv = ConvModule(
             in_channels=self.in_channels[0],
             out_channels=self.channels,
-            kernel_size=1,
+            # kernel_size=1,
+            kernel_size=3,
+            padding=1,
             norm_cfg=dict(type='BN', requires_grad=True),
-            act_cfg=self.act_cfg)
-        self.act0 = build_activation_layer(self.act_cfg)
+            act_cfg=dict(type='ReLU', inplace=True))
 
         self.convs = nn.ModuleList()
         for i in range(num_inputs):
@@ -290,24 +285,30 @@ class SegTrueHead(BaseDecodeHead):
                 ConvModule(
                     in_channels=self.num_heads[i],
                     out_channels=self.channels,
-                    kernel_size=1,
+                    # kernel_size=1,
+                    kernel_size=3,
+                    padding=1,
                     stride=1,
                     norm_cfg=dict(type='BN', requires_grad=True),
-                    act_cfg=self.act_cfg))
+                    act_cfg=dict(type='ReLU', inplace=True)))
 
         self.fusion_attn = DepthwiseSeparableConvModule(
             in_channels=self.channels * num_inputs,
             out_channels=self.channels,
-            kernel_size=1,
+            # kernel_size=1,
+            kernel_size=3,
+            padding=1,
             norm_cfg=dict(type='BN', requires_grad=True),
-            act_cfg=self.act_cfg)
+            act_cfg=dict(type='ReLU', inplace=True))
 
         self.fusion_attn_feat = ConvModule(
             in_channels=2 * self.channels,
             out_channels=self.channels,
-            kernel_size=1,
+            # kernel_size=1,
+            kernel_size=3,
+            padding=1,
             norm_cfg=dict(type='BN', requires_grad=True),
-            act_cfg=self.act_cfg)
+            act_cfg=dict(type='ReLU', inplace=True))
 
         self.pred = Sequential(
             self.dropout,
